@@ -34,6 +34,14 @@ public sealed class RemotePlayWindowStream : IStreamSession
 
     private static readonly string[] SonyProcesses = ["RemotePlay"];
     private static readonly string[] ChiakiProcesses = ["chiaki", "chiaki-ng"];
+    /// <summary>UWP uygulamalarının penceresini tutan ortak çerçeve süreci (başka uygulamaların pencereleri de orada).</summary>
+    private const string UwpFrameProcess = "ApplicationFrameHost";
+    /// <summary>
+    /// Xbox uygulamasının penceresi iki süreç arasında gidip gelir: pencere modunda UWP çerçevesinde, tam ekranda
+    /// kendi sürecinde görünür. Kullanıcı hangisini seçerse seçsin ikisi de aranır, yoksa tam ekrana geçince
+    /// pencere kaybolur.
+    /// </summary>
+    private static readonly string[] XboxProcesses = ["XboxPcApp", UwpFrameProcess];
 
     public event Action<Frame>? FrameReceived;
     public event Action<SessionState>? StateChanged;
@@ -68,7 +76,7 @@ public sealed class RemotePlayWindowStream : IStreamSession
             throw new ArgumentException("A process and window title must be selected.", nameof(target));
         app = RemotePlayApp.Automatic;
         selectedWindow = target;
-        processNames = [target.ProcessName];
+        processNames = ProcessesFor(target.ProcessName);
     }
 
     public void Start()
@@ -232,33 +240,51 @@ public sealed class RemotePlayWindowStream : IStreamSession
             Report(SessionState.Streaming);
     }
 
-    /// <summary>Seçilen uygulamaların en büyük, görünür, simge durumunda olmayan üst düzey penceresi.</summary>
+    /// <summary>Seçilen pencere, aynı uygulamanın başka adla açılan penceresinde de bulunsun.</summary>
+    private static string[] ProcessesFor(string selected) =>
+        XboxProcesses.Any(name => string.Equals(name, selected, StringComparison.OrdinalIgnoreCase)) ? XboxProcesses : [selected];
+
+    /// <summary>Penceresini başka uygulamalarla paylaşılan bir süreçte tutan uygulama: başlık olmadan ayırt edilemez.</summary>
+    private static bool SharesItsWindowProcess(string process) =>
+        string.Equals(process, UwpFrameProcess, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Seçilen uygulamaların en büyük, görünür, simge durumunda olmayan üst düzey penceresi. Pencereyi kullanıcı
+    /// seçtiyse başlığı aynı olan pencere yeğlenir; aynı uygulama penceresini başka adla açtıysa (ör. Xbox
+    /// uygulaması tam ekrana geçince) o pencere de kabul edilir. Paylaşılan çerçeve sürecinde ise başlık şarttır:
+    /// yoksa oradaki başka bir uygulamanın penceresi okunabilir.
+    /// </summary>
     private static IntPtr FindGameWindow(string[] names, string? selectedTitle = null)
     {
-        var processes = new Dictionary<uint, bool>();
+        var processes = new Dictionary<uint, string?>();
         var best = IntPtr.Zero;
         long bestArea = 0;
+        var bestExact = false;
         Native.EnumWindows((hwnd, _) =>
         {
             if (!Native.IsWindowVisible(hwnd) || Native.IsIconic(hwnd) || Native.GetWindow(hwnd, Native.GwOwner) != IntPtr.Zero) return true;
             Native.GetWindowThreadProcessId(hwnd, out var pid);
-            if (!processes.TryGetValue(pid, out var wanted))
+            if (pid == Environment.ProcessId) return true; // Kendi altyazı penceremiz okunmasın.
+            if (!processes.TryGetValue(pid, out var name))
             {
                 try
                 {
                     using var process = Process.GetProcessById((int)pid);
-                    wanted = names.Any(name => string.Equals(process.ProcessName, name, StringComparison.OrdinalIgnoreCase));
+                    name = names.FirstOrDefault(wanted => string.Equals(process.ProcessName, wanted, StringComparison.OrdinalIgnoreCase));
                 }
-                catch (Exception) { wanted = false; }
-                processes[pid] = wanted;
+                catch (Exception) { name = null; }
+                processes[pid] = name;
             }
-            if (!wanted || (selectedTitle is not null && (pid == Environment.ProcessId || WindowTitle(hwnd) != selectedTitle))
-                || !Native.GetWindowRect(hwnd, out var rect)) return true;
+            if (name is null || !Native.GetWindowRect(hwnd, out var rect)) return true;
+            var exact = selectedTitle is null || WindowTitle(hwnd) == selectedTitle;
+            if (!exact && SharesItsWindowProcess(name)) return true;
             var (width, height) = (rect.Right - rect.Left, rect.Bottom - rect.Top);
             if (width < MinimumWidth || height < MinimumHeight) return true;
             var area = (long)width * height;
-            if (area > bestArea)
+            // Başlığı tutan pencere her zaman önce gelir; eşitlikte en büyüğü.
+            if (exact != bestExact ? exact : area > bestArea)
             {
+                bestExact = exact;
                 bestArea = area;
                 best = hwnd;
             }
