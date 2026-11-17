@@ -521,6 +521,9 @@
                             </Grid>
                             <TextBlock x:Name="Ps5SourceHint" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,12,0,0"
                                        Text="{t:T 'CouchSubs connects to the PS5 with the second account. Sony\'s PS Remote Play can\'t be used at the same time.'}" />
+                            <!-- Xbox tek yayın oturumuna izin verir: CouchSubs kendi oturumunu açınca kullanıcının yayını düşer. -->
+                            <TextBlock x:Name="XboxSourceHint" Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,12,0,0" Visibility="Collapsed"
+                                       Text="{t:T 'CouchSubs opens its own Xbox stream with your account. Xbox allows one stream at a time, so the stream you are playing stops. To keep playing, read the picture from the Xbox window on this PC instead.'}" />
                             <!-- PS5 seçili ama ikinci hesap ya da PS5 eşleşmesi yok: sihirbazı ikinci hesap adımından açar. -->
                             <Grid x:Name="Ps5LinkPanel" Margin="0,12,0,0">
                                 <TextBlock Text="{t:T 'The PS5 is not linked yet. Sign in with the second account and pair the PS5.'}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,170,0" />

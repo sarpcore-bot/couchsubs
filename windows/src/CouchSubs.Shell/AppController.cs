@@ -126,14 +126,20 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
         {
             CpuTranslationThreads = CpuThreadOptions.Normalize(loaded.CpuTranslationThreads, Environment.ProcessorCount),
         };
+        // Xbox modunda PS5'e özgü Remote Play penceresi okunamaz (konsol türü sonradan değişmiş olabilir): konsol
+        // bağlantısına dönülür. Seçilen pencere her iki konsolda da geçerli olduğu için olduğu gibi kalır.
+        if (consoleKind == GameConsoleKind.Xbox && settings.FrameSource == FrameSource.RemotePlayWindow)
+            settings = settings with { FrameSource = FrameSource.Ps5 };
         services.Translation.SelectCpuThreads(settings.CpuTranslationThreads);
         services.Translation.SelectDevice(settings.TranslationDevice);
         // Listede olmayan model varsayılana döndüyse ayar hemen kaydedilir.
         if (settings != loaded) settingsStore.Save(settings);
         var paired = tv is not null && store.Load<string>(StoreKeys.TvKey) is not null;
-        // Remote Play penceresinden okurken PS5 eşleşmesi gerekmez.
+        // Pencereden okurken konsol eşleşmesi gerekmez: Remote Play penceresi PS5'te, açıkça seçilen pencere (OBS,
+        // oyun ya da bu bilgisayardaki Xbox uygulaması) her iki konsolda da hesapsız çalışır.
         var consoleReady = consoleKind == GameConsoleKind.Xbox ? xboxToken is not null && xboxConsole is not null : accountId is not null && console is not null;
-        var ready = (!IsXbox && (settings.FrameSource is FrameSource.RemotePlayWindow or FrameSource.CaptureWindow))
+        var ready = settings.FrameSource == FrameSource.CaptureWindow
+                    || (!IsXbox && settings.FrameSource == FrameSource.RemotePlayWindow)
                     || SetupIsComplete(store, consoleReady, paired);
         // Yarım kalan kurulum (ör. TV uygulaması kurulurken kapatıldı) PS5 kayıtlıysa TV adımından sürer.
         step = ready ? OnboardingStep.Done : consoleReady ? OnboardingStep.Tv : OnboardingStep.Welcome;
@@ -196,7 +202,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public GameConsoleKind ConsoleKind => consoleKind;
     public bool ConsoleKindLocked => consoleKindLocked;
     public bool IsXbox => consoleKind == GameConsoleKind.Xbox;
-    public string ConsoleTitle => IsXbox ? "Xbox" : settings.FrameSource == FrameSource.CaptureWindow ? text["Selected window"] : "PS5";
+    public string ConsoleTitle => settings.FrameSource == FrameSource.CaptureWindow ? text["Selected window"] : IsXbox ? "Xbox" : "PS5";
     public bool HasXboxAccount => xboxToken is not null;
     public XboxConsole? SelectedXboxConsole => xboxConsole;
     public void SelectConsoleKind(GameConsoleKind kind)
@@ -275,11 +281,11 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public bool IsRunning { get => isRunning; private set => Set(ref isRunning, value, [nameof(Ps5StatusText), nameof(Ps5Tone), nameof(TvTone)]); }
     public bool IsStarting { get => isStarting; private set => Set(ref isStarting, value); }
     public SessionState SessionState { get => sessionState; private set => Set(ref sessionState, value, [nameof(Ps5StatusText), nameof(Ps5Tone)]); }
-    public string Ps5StatusText => IsXbox ? XboxStatusText()
-        : settings.FrameSource == FrameSource.RemotePlayWindow
-            ? WindowStatusText(sessionState, isRunning, text, installed: !RemotePlayMissing)
-            : settings.FrameSource == FrameSource.CaptureWindow
-                ? CaptureWindowStatusText(sessionState, isRunning, text, settings.CaptureWindow)
+    public string Ps5StatusText => settings.FrameSource == FrameSource.CaptureWindow
+        ? CaptureWindowStatusText(sessionState, isRunning, text, settings.CaptureWindow)
+        : IsXbox ? XboxStatusText()
+            : settings.FrameSource == FrameSource.RemotePlayWindow
+                ? WindowStatusText(sessionState, isRunning, text, installed: !RemotePlayMissing)
                 : StatusText(sessionState, isRunning, text, console is null ? null : string.IsNullOrEmpty(console.Name) ? "PS5" : console.Name);
     private string XboxStatusText() => sessionState.Phase switch
     {
@@ -302,10 +308,10 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public bool NeedsTv => ShowsOnTv && !HasTv;
     /// <summary>Çeviri başlatılabilir mi: PS5 kurulu ve altyazının gideceği bir yer var (TV eşleşmiş ya da bilgisayar ekranı seçili).</summary>
     /// <summary>Görüntü kaynağı hazır ve altyazının gideceği bir yer var.</summary>
-    public bool CanStart => (IsXbox ? xboxToken is not null && xboxConsole is not null
+    public bool CanStart => (settings.FrameSource == FrameSource.CaptureWindow
+                                ? settings.CaptureWindow is { ProcessName.Length: > 0, Title.Length: > 0 }
+                            : IsXbox ? xboxToken is not null && xboxConsole is not null
                             : settings.FrameSource == FrameSource.RemotePlayWindow
-                              || settings.FrameSource == FrameSource.CaptureWindow && settings.CaptureWindow is
-                                 { ProcessName.Length: > 0, Title.Length: > 0 }
                               || settings.FrameSource == FrameSource.Ps5 && console is not null && accountId is not null)
                             && (ShowsOnComputer || HasTv);
     public string LastSource { get => lastSource; private set => Set(ref lastSource, value); }
@@ -621,7 +627,7 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     public IReadOnlyList<WindowCaptureTarget> AvailableCaptureWindows() => services.CaptureWindows();
 
     /// <summary>Görüntü PS5'ten (ikinci hesap) alınacak ama hesap ya da PS5 eşleşmesi yok: Ayarlar'da "Hesabı bağla" görünür.</summary>
-    public bool NeedsPs5Link => settings.FrameSource == FrameSource.Ps5 && (accountId is null || console is null);
+    public bool NeedsPs5Link => !IsXbox && settings.FrameSource == FrameSource.Ps5 && (accountId is null || console is null);
 
     /// <summary>Ayarlar › Görüntü kaynağı › "Hesabı bağla": sihirbaz ikinci hesap adımından açılır (PSN girişi, PS5 eşleştirmesi).</summary>
     public void LinkPs5Account() => Step = OnboardingStep.SecondAccount;
@@ -1249,9 +1255,11 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     {
         // Düğmeye iki kez basılması ya da beklerken tekrar çağrılması ikinci bir oturum açmaz.
         if (isRunning || isStarting || !CanStart) return;
-        // PS5 için hesap gerekir; Remote Play, açıkça seçilen OBS/oyun penceresi ve Xbox için gerekmez.
-        var readsWindow = !IsXbox && settings.FrameSource == FrameSource.RemotePlayWindow;
-        var readsCapture = !IsXbox && settings.FrameSource == FrameSource.CaptureWindow;
+        // PS5 için hesap gerekir; Remote Play, açıkça seçilen OBS/oyun penceresi ve Xbox için gerekmez. Seçilen
+        // pencere Xbox modunda da geçerlidir: konsola ikinci bir yayın oturumu açılmadığı için kullanıcının kendi
+        // Xbox yayını (tek oturum kuralı) kesilmez.
+        var readsCapture = settings.FrameSource == FrameSource.CaptureWindow;
+        var readsWindow = !IsXbox && !readsCapture && settings.FrameSource == FrameSource.RemotePlayWindow;
         if (!IsXbox && !readsWindow && !readsCapture && (console is null || accountId is null)) return;
         IsStarting = true;
         try
@@ -1267,10 +1275,16 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             if (settings.Dubbing.Enabled && DubbingInstalled) MakeDubber()?.Prepare();
             SubtitleLog.Write($"oturum başladı: {settings.SourceLanguage}→{settings.TargetLanguage}, "
                 + $"motor: {(OnlineTranslationActive ? settings.OnlineEngine.ToString() : "ücretsiz")}, paketler: {(settings.GamePacks ? "açık" : "kapalı")}, "
-                + $"görüntü: {(IsXbox ? "Xbox" : readsWindow ? "Remote Play penceresi" : readsCapture ? "seçilen pencere" : "PS5")}");
+                + $"görüntü: {(readsCapture ? "seçilen pencere" : IsXbox ? "Xbox" : readsWindow ? "Remote Play penceresi" : "PS5")}");
 
             IStreamSession stream;
-            if (IsXbox)
+            if (readsCapture)
+            {
+                var target = settings.CaptureWindow ?? throw new InvalidOperationException("A capture window must be selected.");
+                RemotePlayLog.Note($"Çeviri başladı; seçilen pencere: {target.ProcessName} / {target.Title}");
+                stream = services.MakeCaptureWindowStream(target);
+            }
+            else if (IsXbox)
             {
                 RemotePlayLog.Note($"Çeviri başladı; {ConsoleTitle} bağlantısı açılıyor.");
                 stream = (services.Xbox ?? throw new InvalidOperationException(text["Xbox streaming isn't available in this version."])).MakeStream(xboxConsole!, xboxToken!);
@@ -1280,12 +1294,6 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
             {
                 RemotePlayLog.Note($"Çeviri başladı; görüntü bu bilgisayardaki Remote Play penceresinden ({settings.RemotePlayApp})");
                 stream = services.MakeWindowStream(settings.RemotePlayApp);
-            }
-            else if (readsCapture)
-            {
-                var target = settings.CaptureWindow ?? throw new InvalidOperationException("A capture window must be selected.");
-                RemotePlayLog.Note($"Çeviri başladı; seçilen pencere: {target.ProcessName} / {target.Title}");
-                stream = services.MakeCaptureWindowStream(target);
             }
             else
             {
@@ -1340,7 +1348,8 @@ public sealed class AppController : INotifyPropertyChanged, IDisposable
     /// doğrudan okunup yalnız TV'ye gönderiliyorsa ekran kendi ayarıyla kapanabilir.
     /// </summary>
     private bool KeepsDisplayOn =>
-        (!IsXbox && settings.FrameSource is FrameSource.RemotePlayWindow or FrameSource.CaptureWindow) || ShowsOnComputer;
+        settings.FrameSource == FrameSource.CaptureWindow
+        || (!IsXbox && settings.FrameSource == FrameSource.RemotePlayWindow) || ShowsOnComputer;
 
     private void OutputChanged()
     {

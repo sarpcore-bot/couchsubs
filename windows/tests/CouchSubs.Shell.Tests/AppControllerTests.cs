@@ -1037,6 +1037,54 @@ public class AppControllerRunTests
         controller.Dispose();
     }
 
+    /// Xbox modunda da seçilen pencere okunabilir: Microsoft hesabıyla ikinci bir yayın oturumu açılmadığı için
+    /// kullanıcının kendi Xbox yayını (tek oturum kuralı) düşmez.
+    [Fact]
+    public async Task SelectedWindowReadsXboxWithoutOpeningASecondStream()
+    {
+        var target = new WindowCaptureTarget("XboxPcApp", "Xbox");
+        var store = new MemoryStore();
+        store.Save(StoreKeys.ConsoleKind, GameConsoleKind.Xbox);
+        store.Save(StoreKeys.XboxToken, "{}");
+        store.Save(StoreKeys.XboxConsole, new XboxConsole("F4", "Oturma Odası Xbox", "XboxSeriesX", true));
+        var settings = new MemorySettings();
+        settings.Save(new UserSettings
+        {
+            FrameSource = FrameSource.CaptureWindow,
+            CaptureWindow = target,
+            Output = SubtitleOutput.Computer,
+        });
+        var xbox = new FakeXbox([]);
+        var services = new FakeServices { Xbox = xbox, RemotePlayIsInstalled = false };
+        var controller = AppControllerTests.Make(services: services, store: store, settings: settings);
+
+        Assert.True(controller.IsXbox);
+        Assert.Equal(OnboardingStep.Done, controller.Step);
+        Assert.True(controller.CanStart);
+
+        await controller.StartAsync();
+        Assert.Equal([target], services.CaptureWindowStreams);
+        Assert.Equal(0, xbox.StreamsMade);
+        Assert.True(controller.IsRunning);
+        controller.Dispose();
+    }
+
+    /// PS5'e özgü Remote Play penceresi Xbox modunda okunamaz: kaynak konsol bağlantısına döner.
+    [Fact]
+    public void XboxFallsBackToTheConsoleWhenTheRemotePlayWindowWasSelected()
+    {
+        var store = new MemoryStore();
+        store.Save(StoreKeys.ConsoleKind, GameConsoleKind.Xbox);
+        var settings = new MemorySettings();
+        settings.Save(new UserSettings { FrameSource = FrameSource.RemotePlayWindow, Output = SubtitleOutput.Computer });
+        var controller = AppControllerTests.Make(services: new FakeServices { Xbox = new FakeXbox([]) }, store: store, settings: settings);
+
+        Assert.Equal(FrameSource.Ps5, controller.Settings.FrameSource);
+        Assert.Equal(FrameSource.Ps5, settings.Saved?.FrameSource);
+        Assert.False(controller.CanStart);
+        controller.Dispose();
+    }
+
     /// Remote Play penceresinden okurken PS5 kaydı gerekmez: sihirbaz açılmaz, kurulum kaydı değişmez, çeviri pencere
     /// kaynağıyla (PS5'e bağlanmadan) başlar.
     [Fact]
@@ -1789,5 +1837,10 @@ internal sealed class FakeXbox(IReadOnlyList<XboxConsole> consoles) : IXboxServi
     public Task<XboxLoginChallenge> BeginLoginAsync() => throw new NotSupportedException();
     public Task<string> CompleteLoginAsync() => throw new NotSupportedException();
     public Task<IReadOnlyList<XboxConsole>> DiscoverAsync(string token) => Task.FromResult(consoles);
-    public IStreamSession MakeStream(XboxConsole console, string token) => new FakeStream();
+    public int StreamsMade { get; private set; }
+    public IStreamSession MakeStream(XboxConsole console, string token)
+    {
+        StreamsMade++;
+        return new FakeStream();
+    }
 }

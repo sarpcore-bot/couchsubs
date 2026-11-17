@@ -115,16 +115,24 @@ public partial class SettingsWindow : Window
         ShowPasscode();
     }
 
-    /// <summary>Remote Play uygulaması seçimi ve ipuçları yalnız seçili görüntü kaynağına göre görünür.</summary>
+    /// <summary>
+    /// Remote Play uygulaması seçimi ve ipuçları yalnız seçili görüntü kaynağına göre görünür. Xbox modunda PS5'e
+    /// özgü seçenekler (PS5 bağlantısı, Remote Play penceresi) gizlenir; geriye konsola bağlanmak ya da bu
+    /// bilgisayardaki pencereyi okumak kalır.
+    /// </summary>
     private void ShowFrameSource()
     {
-        var window = controller.Settings.FrameSource == FrameSource.RemotePlayWindow;
+        var xbox = controller.IsXbox;
+        var window = !xbox && controller.Settings.FrameSource == FrameSource.RemotePlayWindow;
         var capture = controller.Settings.FrameSource == FrameSource.CaptureWindow;
+        var direct = !window && !capture;
+        ShowConsoleSourceChoice(xbox);
         RemotePlayAppPanel.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         WindowSourceHint.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         CaptureWindowPanel.Visibility = capture ? Visibility.Visible : Visibility.Collapsed;
         if (capture) RefreshCaptureWindows();
-        Ps5SourceHint.Visibility = window || capture ? Visibility.Collapsed : Visibility.Visible;
+        Ps5SourceHint.Visibility = direct && !xbox ? Visibility.Visible : Visibility.Collapsed;
+        XboxSourceHint.Visibility = direct && xbox ? Visibility.Visible : Visibility.Collapsed;
         SonyInstallRow.Visibility = ChiakiInstallRow.Visibility = window ? Visibility.Visible : Visibility.Collapsed;
         var sony = controller.RemotePlayInstalled(RemotePlayApp.Sony);
         var chiaki = controller.RemotePlayInstalled(RemotePlayApp.Chiaki);
@@ -133,6 +141,19 @@ public partial class SettingsWindow : Window
         ChiakiInstalledText.Visibility = chiaki ? Visibility.Visible : Visibility.Collapsed;
         ChiakiDownloadButton.Visibility = chiaki ? Visibility.Collapsed : Visibility.Visible;
         Ps5LinkPanel.Visibility = controller.NeedsPs5Link ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Konsol seçeneğinin yazısı ve PS5'e özgü satırın görünürlüğü. Xbox modunda ilk seçenek Xbox'a bağlanmayı anlatır
+    /// (Xbox tek yayın oturumuna izin verdiği için kullanıcının kendi yayınını keser) ve PS5 Remote Play penceresi
+    /// seçeneği listeden kalkar; ikisi arasında geçiş olabildiği için PS5 hali de geri yazılır.
+    /// </summary>
+    private void ShowConsoleSourceChoice(bool xbox)
+    {
+        var text = Localizer.Current;
+        var items = FrameSourceChoice.Items.Cast<ComboBoxItem>().ToList();
+        items[0].Content = text[xbox ? "The Xbox (your account)" : "The PS5 (second account)"];
+        items[1].Visibility = xbox ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void OnDownloadSony(object sender, RoutedEventArgs e) => OpenUrl(AppController.SonyRemotePlayDownload);
